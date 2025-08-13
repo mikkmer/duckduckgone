@@ -1,0 +1,21 @@
+# 🦆 DuckDuckGone CLI (`ddg`)
+
+A simple and snappy CLI tool to generate **temporary DuckDuckGo emails**.  
+
+---
+
+## 🚀 Features
+
+- Generate an email: `ddg gen` / `ddg generate`  
+- View or update settings: `ddg settings`  
+- Automatic copying to clipboard  
+
+---
+
+## 💻 Installation
+
+```bash
+git clone https://github.com/mikkmer/duckduckgone
+cd duckduckgone
+go build -o ddg
+sudo mv ddg /usr/local/bin/  # optional for global use

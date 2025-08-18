@@ -17,5 +17,9 @@ A simple and snappy CLI tool to generate **temporary DuckDuckGo emails**.
 ```bash
 git clone https://github.com/mikkmer/duckduckgone
 cd duckduckgone
-go build -o ddg
-sudo mv ddg /usr/local/bin/  # optional for global use
+make build
+sudo make move  # optional for global use
+```
+
+TODO: proper guide once this repo reaches one star :(
+

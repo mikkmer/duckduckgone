@@ -94,6 +94,17 @@ Commands:
   settings         View or change settings
   help             Show this help
 
+Changing settings:
+To change settings, use the following flags:
+
+  --apikey <key>          Set the API key
+  --clipboard <yes|no>    Enable or disable clipboard copying
+  --ddggen <yes|no>       Enable or disable automatic DuckDuckGo generation
+
+For example: 
+	ddg settings --apikey myapikey --clipboard yes --ddggen no
+	ddg settings --clipboard no
+
 Examples:
   ddg gen
   ddg settings`)

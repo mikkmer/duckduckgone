@@ -17,15 +17,21 @@ import (
 
 const (
 	confFileName = ".ddg.conf"
-	apiKeyKey    = "api"
-	clipKey      = "clipboard"
-	defaultClip  = "yes"
-	endpoint     = "https://quack.duckduckgo.com/api/email/addresses"
+	apiKey       = "api"
+	clip         = "clipboard"
+	ddgGen       = "ddggen"
+
+	defaultClip   = "yes"
+	defaultDDGGen = "yes"
+	endpoint      = "https://quack.duckduckgo.com/api/email/addresses"
+	version       = "1.0.0"
 )
 
 type conf struct {
-	APIKey    string
-	Clipboard string
+	APIKey        string
+	Clipboard     string
+	DDGGen        string
+	SetupComplete string // Added to track if setup is complete
 }
 
 type ddgResp struct {
@@ -39,12 +45,27 @@ func main() {
 		cmd = strings.ToLower(os.Args[1])
 	}
 
-	switch cmd {
-	case "gen", "generate":
+	switch {
+	case cmd == "":
+		cfg, err := ensureConfig(true)
+		if err != nil {
+			exitErr(err)
+		}
+		if strings.EqualFold(cfg.DDGGen, "yes") {
+			doGenerate()
+		} else {
+			showHelp()
+		}
+
+	case strings.HasPrefix(cmd, "gen"):
 		doGenerate()
-	case "settings":
+	case strings.HasPrefix(cmd, "set"):
 		doSettings()
-	case "help", "":
+	case cmd == "reset":
+		doReset()
+	case cmd == "version":
+		showVersion()
+	case cmd == "help":
 		showHelp()
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n\n", cmd)
@@ -79,7 +100,7 @@ Examples:
 }
 
 func doGenerate() {
-	cfg, err := ensureConfig()
+	cfg, err := ensureConfig(false)
 	if err != nil {
 		exitErr(err)
 	}
@@ -101,32 +122,95 @@ func doGenerate() {
 }
 
 func doSettings() {
-	cfg, _ := readConfig() // ignore error
+	// Update settings with flags
+	if len(os.Args) > 2 {
+		cfg, err := ensureConfig(false)
+		if err != nil {
+			exitErr(err)
+		}
+		for i := 2; i < len(os.Args); i++ {
+			arg := os.Args[i]
+			if arg == "--apikey" && i+1 < len(os.Args) {
+				cfg.APIKey = os.Args[i+1]
+				i++
+			} else if arg == "--clipboard" && i+1 < len(os.Args) {
+				val := strings.ToLower(os.Args[i+1])
+				if val == "yes" || val == "no" {
+					cfg.Clipboard = val
+				}
+				i++
+			} else if arg == "--ddggen" && i+1 < len(os.Args) {
+				val := strings.ToLower(os.Args[i+1])
+				if val == "yes" || val == "no" {
+					cfg.DDGGen = val
+				}
+				i++
+			} else {
+				fmt.Fprintf(os.Stderr, "Unknown argument: %s\n", arg)
+				break
+			}
+		}
+		if err := writeConfig(cfg); err != nil {
+			exitErr(err)
+		}
+		fmt.Println("✅ Settings updated.")
+		return
+	}
+
+	// Show current settings
+	cfg, err := ensureConfig(false)
+	if err != nil {
+		exitErr(err)
+	}
 	if cfg.Clipboard == "" {
 		cfg.Clipboard = defaultClip
 	}
+	if cfg.DDGGen == "" {
+		cfg.DDGGen = defaultDDGGen
+	}
 
+	fmt.Printf(
+		"Current settings:\n- API key: %s\n- Clipboard copy: %s\n- Run ddg auto-generate: %s\n\nUse 'ddg help' to learn how to change these.\n",
+		emptyToDash(cfg.APIKey),
+		cfg.Clipboard,
+		cfg.DDGGen,
+	)
+}
+
+func doReset() {
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Printf("Current API key: %s\n", emptyToDash(cfg.APIKey))
-	fmt.Printf("Clipboard copy: %s\n\n", cfg.Clipboard)
-	fmt.Println("Press Enter to keep current value.")
 
-	fmt.Printf("New API key [%s]: ", cfg.APIKey)
-	newAPI := strings.TrimSpace(readLine(reader))
-	if newAPI != "" {
-		cfg.APIKey = newAPI
+	fmt.Print("⚠️ Are you sure you want to completely reset this application? (yes/no): ")
+	answer := strings.ToLower(strings.TrimSpace(readLine(reader)))
+	if answer != "yes" {
+		fmt.Println("❌ Reset cancelled.")
+		return
 	}
 
-	fmt.Printf("Clipboard copy yes/no [%s]: ", cfg.Clipboard)
-	newClip := strings.TrimSpace(readLine(reader))
-	if newClip != "" && (strings.EqualFold(newClip, "yes") || strings.EqualFold(newClip, "no")) {
-		cfg.Clipboard = strings.ToLower(newClip)
+	fmt.Print("Type 'Reset' to reset the application. This is your final chance to go back: ")
+	confirm := strings.TrimSpace(readLine(reader))
+	if confirm != "Reset" {
+		fmt.Println("❌ Reset cancelled.")
+		return
 	}
 
+	// Overwrite config with setupComplete = false
+	cfg := conf{SetupComplete: "false"}
 	if err := writeConfig(cfg); err != nil {
 		exitErr(err)
 	}
-	fmt.Println("✅ Settings updated.")
+	fmt.Println("✅ Application reset. Run 'ddg' again to set up.")
+}
+
+func showVersion() {
+	fmt.Printf("ddg version %s\n", version)
+}
+
+func emptyToDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
 
 type httpError struct {
@@ -170,29 +254,75 @@ func requestEmail(apiKey string) (string, []byte, error) {
 	return parsed.Address + "@duck.com", body, nil
 }
 
-func ensureConfig() (conf, error) {
+func ensureConfig(allowSetup bool) (conf, error) {
 	cfg, err := readConfig()
-	if err == nil && cfg.APIKey != "" {
+	if err == nil && cfg.APIKey != "" && strings.EqualFold(cfg.SetupComplete, "true") {
 		if cfg.Clipboard == "" {
 			cfg.Clipboard = defaultClip
-			_ = writeConfig(cfg)
 		}
+		if cfg.DDGGen == "" {
+			cfg.DDGGen = defaultDDGGen
+		}
+		_ = writeConfig(cfg)
 		return cfg, nil
 	}
 
-	fmt.Println("Hi! Looks like you haven't used duckduckgone before!")
-	fmt.Print("Enter your API key: ")
+	if !allowSetup {
+		fmt.Println("It looks like you haven't finished setting up DuckDuckGone! Please run ddg to get started.")
+		os.Exit(1)
+	}
+
+	// Setup wizard
 	reader := bufio.NewReader(os.Stdin)
+	fmt.Println("Hi! Looks like you haven't used DuckDuckGone before!")
+
+	fmt.Print("Enter your API key: ")
 	api := strings.TrimSpace(readLine(reader))
 	if api == "" {
 		return conf{}, fmt.Errorf("no API key provided")
 	}
 
-	cfg = conf{APIKey: api, Clipboard: defaultClip}
+	fmt.Printf("Copy emails to clipboard automatically? (yes/no) [yes]: ")
+	clip := strings.TrimSpace(readLine(reader))
+	if clip == "" {
+		clip = defaultClip
+	}
+
+	fmt.Printf("Run 'ddg' to generate an email automatically? (yes/no) [yes]: ")
+	ddggen := strings.TrimSpace(readLine(reader))
+	if ddggen == "" {
+		ddggen = defaultDDGGen
+	}
+
+	cfg = conf{
+		APIKey:        api,
+		Clipboard:     strings.ToLower(clip),
+		DDGGen:        strings.ToLower(ddggen),
+		SetupComplete: "true",
+	}
 	if err := writeConfig(cfg); err != nil {
 		return conf{}, err
 	}
 	return cfg, nil
+}
+
+func writeConfig(c conf) error {
+	path, err := confPath()
+	if err != nil {
+		return err
+	}
+	data := fmt.Sprintf("api = %s\nclipboard = %s\nddggen = %s\nsetupcomplete = %s\n",
+		c.APIKey, c.Clipboard, c.DDGGen, c.SetupComplete)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.WriteString(data); err != nil {
+		return err
+	}
+	_ = os.Chmod(path, 0600)
+	return nil
 }
 
 func readConfig() (conf, error) {
@@ -219,34 +349,20 @@ func readConfig() (conf, error) {
 		if len(parts) != 2 {
 			continue
 		}
-		key := strings.TrimSpace(parts[0])
-		val := strings.TrimSpace(parts[1])
-		switch strings.ToLower(key) {
-		case apiKeyKey:
+		key := strings.ToLower(strings.TrimSpace(parts[0]))
+		val := strings.ToLower(strings.TrimSpace(parts[1]))
+		switch key {
+		case apiKey:
 			c.APIKey = trimQuotes(val)
-		case clipKey:
-			c.Clipboard = strings.ToLower(trimQuotes(val))
+		case clip:
+			c.Clipboard = trimQuotes(val)
+		case ddgGen:
+			c.DDGGen = trimQuotes(val)
+		case "setupcomplete":
+			c.SetupComplete = trimQuotes(val)
 		}
 	}
 	return c, nil
-}
-
-func writeConfig(c conf) error {
-	path, err := confPath()
-	if err != nil {
-		return err
-	}
-	data := fmt.Sprintf("api = %s\nclipboard = %s\n", c.APIKey, c.Clipboard)
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if _, err := f.WriteString(data); err != nil {
-		return err
-	}
-	_ = os.Chmod(path, 0600)
-	return nil
 }
 
 func confPath() (string, error) {
@@ -260,13 +376,6 @@ func confPath() (string, error) {
 func trimQuotes(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.Trim(s, `"'`)
-	return s
-}
-
-func emptyToDash(s string) string {
-	if s == "" {
-		return "-"
-	}
 	return s
 }
 
